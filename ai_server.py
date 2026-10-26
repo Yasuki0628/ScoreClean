@@ -1,5 +1,5 @@
 """Optional local recognition proxy. Python 3.10+, no third-party packages."""
-import os, json, base64, urllib.request, urllib.error, cgi
+import os, json, base64, urllib.request, urllib.error
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -10,6 +10,7 @@ class Handler(BaseHTTPRequestHandler):
   b=json.dumps(obj,ensure_ascii=False).encode();self.send_response(code);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(b)));self.end_headers();self.wfile.write(b)
  def do_GET(self):
   path=self.path.split('?')[0]
+  if path=='/api/health':self.send(200,{'ok':True,'aiConfigured':bool(os.getenv('OPENAI_API_KEY')),'model':os.getenv('SCORECLEAN_MODEL','gpt-4.1-mini')});return
   if path=='/':path='/index.html'
   file=(ROOT/path.lstrip('/')).resolve()
   if ROOT not in file.parents or not file.is_file():self.send_error(404);return
@@ -55,7 +56,11 @@ class Handler(BaseHTTPRequestHandler):
    with urllib.request.urlopen(req,timeout=110) as r:answer=json.load(r)
    raw=answer['choices'][0]['message']['content'];self.send(200,{'result':json.loads(raw)})
   except (ValueError,KeyError,json.JSONDecodeError) as e:self.send(400,{'error':str(e)})
-  except urllib.error.HTTPError as e:self.send(502,{'error':f'AI API error {e.code}: '+e.read().decode()[:350]})
+  except urllib.error.HTTPError as e:
+   try: detail=json.loads(e.read().decode()).get('error',{}).get('message','')
+   except Exception: detail='API側のエラー'
+   self.send(502,{'error':f'AI API HTTP {e.code}: {detail[:450]}'})
+  except urllib.error.URLError:self.send(502,{'error':'AIサービスに接続できません。インターネット接続を確認してください'})
   except Exception as e:self.send(502,{'error':str(e)})
 if __name__=='__main__':
  print('ScoreClean: http://localhost:8765 (AI requires OPENAI_API_KEY and internet)')

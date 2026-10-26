@@ -1,0 +1,7 @@
+name = "scoreclean-ai"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+ALLOWED_ORIGINS = "https://YOURNAME.github.io"
+OPENAI_MODEL = "gpt-4.1-mini"

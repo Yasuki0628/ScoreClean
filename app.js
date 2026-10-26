@@ -4,9 +4,9 @@ function renderPlays(){const label=active==='away'?'先攻':'後攻';$('playsTit
 // v1.1: opt-in image recognition. Never transmit without explicit button click.
 let aiFile=null;
 $('aiImage').onchange=e=>{aiFile=e.target.files?.[0]||null;if(!aiFile)return;if(!aiFile.type.startsWith('image/')){alert('画像ファイルを選んでください');return}const url=URL.createObjectURL(aiFile);$('aiPreview').src=url;$('aiPreview').classList.remove('hidden');$('aiStatus').textContent=`選択：${aiFile.name}（${Math.round(aiFile.size/1024)} KB）`};
-$('aiEndpoint').value=localStorage.getItem('scoreclean.aiEndpoint')||'';
+$('aiEndpoint').value=localStorage.getItem('scoreclean.aiEndpoint')||(location.protocol==='http:'&&location.hostname==='localhost'?'http://localhost:8765/api/recognize':'');
 $('aiEndpoint').onchange=e=>localStorage.setItem('scoreclean.aiEndpoint',e.target.value.trim());
-$('aiRun').onclick=async()=>{if(!aiFile){alert('画像を選択してください');return}const endpoint=$('aiEndpoint').value.trim();if(!/^https:\/\//.test(endpoint)&&!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(endpoint)){alert('HTTPSの解析API URLを入力してください（ローカル環境はhttp://localhost可）');return}if(!confirm('画像を指定した解析サーバーへ送信して読み取りますか？'))return;const btn=$('aiRun');btn.disabled=true;$('aiStatus').textContent='AI解析中…';$('aiApply').disabled=true;try{const fd=new FormData();fd.append('image',aiFile);fd.append('target',$('aiTarget').value);const res=await fetch(endpoint,{method:'POST',body:fd});const payload=await res.json();if(!res.ok)throw Error(payload.error||`HTTP ${res.status}`);const data=payload.result||payload;if(!data||typeof data!=='object'||!data.players||!data.scores)throw Error('解析結果の形式が不正です');$('aiJson').value=JSON.stringify(data,null,2);$('aiReview').classList.remove('hidden');$('aiApply').disabled=false;$('aiStatus').textContent='読取完了。必ず内容を確認してください。'}catch(e){$('aiStatus').textContent='読取失敗：'+e.message}finally{btn.disabled=false}};
+$('aiRun').onclick=async()=>{if(!aiFile){alert('画像を選択してください');return}const endpoint=$('aiEndpoint').value.trim();if(!/^https:\/\//.test(endpoint)&&!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(endpoint)){alert('HTTPSの解析API URLを入力してください（ローカル環境はhttp://localhost可）');return}if(!confirm('画像を指定した解析サーバーへ送信して読み取りますか？'))return;const btn=$('aiRun');btn.disabled=true;$('aiStatus').textContent='AI解析中…';$('aiApply').disabled=true;try{const fd=new FormData();fd.append('image',aiFile);fd.append('target',$('aiTarget').value);const res=await fetch(endpoint,{method:'POST',body:fd});const payload=await res.json();if(!res.ok)throw Error(payload.error||`HTTP ${res.status}`);const data=payload.result||payload;if(!data||typeof data!=='object'||!data.players||!data.scores)throw Error('解析結果の形式が不正です');$('aiJson').value=JSON.stringify(data,null,2);$('aiReview').classList.remove('hidden');$('aiApply').disabled=false;$('aiStatus').textContent='読取完了。必ず内容を確認してください。'}catch(e){$('aiStatus').textContent='読取失敗：'+(e instanceof TypeError?'APIへ接続できません。Cloudflare WorkerのURL・CORS・ネット接続を確認してください。':e.message)}finally{btn.disabled=false}};
 function applyRecognized(data){const sides=['away','home'];if(data.meta&&typeof data.meta==='object')for(const k of Object.keys(defaults().meta))if(!state.meta[k]&&typeof data.meta[k]==='string')state.meta[k]=data.meta[k];for(const side of sides){const src=data.players?.[side];if(Array.isArray(src)){while(state.players[side].length<src.length)state.players[side].push(emptyPlayer());src.forEach((p,i)=>{if(!p||typeof p!=='object')return;const dest=state.players[side][i];for(const k of ['name','position','number'])if(!dest[k]&&typeof p[k]==='string')dest[k]=p[k];if(p.plays&&typeof p.plays==='object')for(const [inning,value]of Object.entries(p.plays))if(/^([0-8])$/.test(inning)&&typeof value==='string'&&!dest.plays[inning])dest.plays[inning]=value})}const scores=data.scores?.[side];if(Array.isArray(scores))scores.slice(0,9).forEach((v,i)=>{if(state.scores[side][i]===''&&(typeof v==='string'||typeof v==='number')&&String(v).trim()!=='')state.scores[side][i]=String(v)})}if(Array.isArray(data.uncertain)&&data.uncertain.length)state.notes+=(state.notes?'\n':'')+'【AI要確認】\n'+data.uncertain.map(String).join('\n');save();render()}
 $('aiApply').onclick=()=>{try{const obj=JSON.parse($('aiJson').value);if(!obj.players||!obj.scores)throw Error('players/scoresがありません');if(!confirm('AI結果を既存記録の空欄へ反映しますか？入力済みの値は保持されます。'))return;applyRecognized(obj);$('aiStatus').textContent='反映完了。各マスを原本と照合してください。';$('aiApply').disabled=true}catch(e){alert('反映できません：'+e.message)}};
 
@@ -57,18 +57,19 @@ $('pipelineRun').onclick=async()=>{
   const fd=new FormData();fd.append('image',aiFile);
   const layoutUrl=endpoint.replace(/\/api\/recognize\/?$/,'/api/layout');
   if(layoutUrl===endpoint)throw Error('解析URLは /api/recognize で終わる必要があります');
-  const lr=await fetch(layoutUrl,{method:'POST',body:fd});const l=await lr.json();if(!lr.ok)throw Error(l.error||'罫線検出失敗');layoutResult=l;
-  const xs=l.verticalLines||[],ys=l.horizontalLines||[];
+  const lr=await fetch(layoutUrl,{method:'POST',body:fd});const l=await lr.json();if(!lr.ok){if(l.code==='LAYOUT_UNAVAILABLE'){layoutResult=null;pipeStatus.textContent='罫線補正はクラウド版では未対応。原画像からAI読取を続行します…';}else throw Error(l.error||'罫線検出失敗');}else layoutResult=l;
+  if(layoutResult){const xs=l.verticalLines||[],ys=l.horizontalLines||[];
   $('pipelinePreview').innerHTML=`<p>補正画像：${l.width}×${l.height} / 縦線 ${xs.length} 本・横線 ${ys.length} 本 / ${safe(l.confidence)}</p><canvas id="pipelineCanvas" style="width:100%;max-width:800px;border:1px solid #aaa"></canvas>`;
   const img=new Image();img.src=l.image;await img.decode();const c=$('pipelineCanvas');c.width=l.width;c.height=l.height;const ctx=c.getContext('2d');ctx.drawImage(img,0,0);ctx.strokeStyle='rgba(0,150,100,.65)';ctx.lineWidth=2;for(const x of xs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,l.height);ctx.stroke()}for(const y of ys){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(l.width,y);ctx.stroke()}
-  pipeStatus.textContent='② AIが補正画像の各打席と記号を解析中…';
-  const blob=await(await fetch(l.image)).blob();const fd2=new FormData();fd2.append('image',blob,'rectified.jpg');fd2.append('target',$('aiTarget').value);
+  }
+  pipeStatus.textContent='② AIが画像の各打席と記号を解析中…';
+  const fd2=new FormData();if(layoutResult){const blob=await(await fetch(l.image)).blob();fd2.append('image',blob,'rectified.jpg')}else fd2.append('image',aiFile);fd2.append('target',$('aiTarget').value);
   const ar=await fetch(endpoint,{method:'POST',body:fd2});const payload=await ar.json();if(!ar.ok)throw Error(payload.error||'AI読取失敗');const data=payload.result||payload;
   if(!data.players||!data.scores)throw Error('AI応答に必須フィールドがありません');
   $('aiJson').value=JSON.stringify(data,null,2);$('aiReview').classList.remove('hidden');$('aiApply').disabled=false;
-  pipeStatus.textContent=`③ AI候補を作成しました。${l.warning} AI読取結果を確認・修正し、「確認した内容を反映」を押してください。`;
+  pipeStatus.textContent=`③ AI候補を作成しました。${layoutResult?(l.warning||''): '※原画像で解析（自動罫線検出なし）。'} AI読取結果を確認・修正し、「確認した内容を反映」を押してください。`;
   updateSheet();$('aiReview').scrollIntoView({behavior:'smooth',block:'start'});
- }catch(err){pipeStatus.textContent='処理を停止しました：'+err.message}finally{button.disabled=false}
+ }catch(err){pipeStatus.textContent='処理を停止しました：'+(err instanceof TypeError?'解析サーバーに接続できません。サーバーの起動とURLを確認してください。':err.message)}finally{button.disabled=false}
 };
 $('aiApply').addEventListener('click',()=>setTimeout(updateSheet,0));updateSheet();
 
@@ -86,3 +87,6 @@ $('mapRun').onclick=async()=>{
  const confirmed={...data,diagrams:{...(data.diagrams||{}),...result.mapped}};delete confirmed.observations;$('aiJson').value=JSON.stringify(confirmed,null,2);
  }catch(e){status.textContent='対応付け失敗：'+e.message}
 };
+
+// GitHub Pages connectivity test
+const testButton=document.getElementById('aiTest');if(testButton)testButton.onclick=async()=>{const status=document.getElementById('aiStatus');const url=document.getElementById('aiEndpoint').value.trim();if(!url){status.textContent='Cloudflare WorkerのURLを入力してください。';return;}try{const u=new URL(url);const res=await fetch(u.origin+'/api/health');const d=await res.json();status.textContent=res.ok&&d.ok?'接続成功：AIサーバー稼働中（APIキー設定状況：'+(d.aiConfigured?'設定済み':'未設定')+'）':'接続エラー：'+(d.error||res.status)}catch(e){status.textContent='接続失敗：URL、Worker公開設定、CORSを確認してください。'}};
